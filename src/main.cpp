@@ -4,6 +4,7 @@
 #include <SPI.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SH110X.h>
+#include <RotaryEncoder.h>
 
 Adafruit_SH1106G display = Adafruit_SH1106G(128, 64, &Wire);
 
@@ -77,12 +78,20 @@ ConnectivityScheme USB_SCHEME = {
         {0, 0, 0, 0, 0, 0, 0, 0, 1},
         {1, 1, 1, 1, 1, 1, 1, 1, 0},
     }};
+const size_t SCHEME_COUNT = 3;
+ConnectivityScheme *SCHEMES[SCHEME_COUNT] = {
+    &DEFAULT_SCHEME, &SEQ_SCHEME, &USB_SCHEME};
 ConnectivityScheme *currentScheme = &DEFAULT_SCHEME;
+size_t schemeIndex;
 
 bool ioTable[2][MIDI_PORT_COUNT] = {
     {0, 0, 0, 0, 0, 0, 0, 0, 0},
     {0, 0, 0, 0, 0, 0, 0, 0, 0},
 };
+
+size_t PIN_ENCODER_SWITCH = 30;
+RotaryEncoder encoder(31, 32, RotaryEncoder::LatchMode::TWO03);
+int encoderPosition;
 
 void drawIoTable()
 {
@@ -96,21 +105,8 @@ void drawIoTable()
   }
 }
 
-elapsedMillis drawTimer;
-
-void setup()
+void drawScheme()
 {
-  Serial.begin(115200);
-
-  for (size_t i = 0; i < SERIAL_MIDI_COUNT; ++i)
-  {
-    serialMidis[i]->begin(MIDI_CHANNEL_OMNI);
-    serialMidis[i]->setThruFilterMode(midi::Thru::Off);
-  }
-  Serial.println("Serial MIDI interfaces initialized");
-  usbMIDI.begin();
-
-  display.begin(0x3C, true);
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
@@ -122,6 +118,31 @@ void setup()
   display.print("I");
   display.setCursor(0, 5 * 8);
   display.print("O");
+}
+
+elapsedMillis drawTimer;
+
+void setup()
+{
+  Serial.begin(115200);
+
+  for (size_t i = 0; i < SERIAL_MIDI_COUNT; ++i)
+  {
+    serialMidis[i]->begin(MIDI_CHANNEL_OMNI);
+    serialMidis[i]->setThruFilterMode(midi::Thru::Off);
+  }
+  usbMIDI.begin();
+  Serial.println("MIDI interfaces initialized");
+
+  pinMode(PIN_ENCODER_SWITCH, INPUT_PULLUP);
+
+  encoder.tick();
+  encoderPosition = encoder.getPosition();
+
+  schemeIndex = 0;
+
+  display.begin(0x3C, true);
+  drawScheme();
   drawIoTable();
   display.display();
 }
@@ -193,5 +214,26 @@ void loop()
     display.display();
     drawTimer = 0;
     memset((void *)ioTable, 0, sizeof(ioTable));
+  }
+
+  encoder.tick();
+  int newPosition = encoder.getPosition();
+  if (newPosition != encoderPosition)
+  {
+    int newIndex = schemeIndex + (int)encoder.getDirection();
+    if (newIndex < 0)
+    {
+      newIndex = SCHEME_COUNT - 1;
+    }
+    else if (newIndex >= (int)SCHEME_COUNT)
+    {
+      newIndex = 0;
+    }
+    schemeIndex = newIndex;
+    currentScheme = SCHEMES[schemeIndex];
+    drawScheme();
+    display.display();
+    Serial.printf("Switching to new scheme %s\r\n", currentScheme->name);
+    encoderPosition = newPosition;
   }
 }
